@@ -46,7 +46,7 @@ pain run
 
 ### Option 1: Binary (Recommended)
 
-Download the latest `pain.exe` from the **[Releases](https://www.google.com/search?q=%23)** page and add it to your System PATH.
+Download the latest `pain.exe` from the **[Releases](https://www.google.com/url?sa=E&source=gmail&q=https://github.com/omnimistic/pain/releases)** page and add it to your System PATH.
 
 ### Option 2: Build from Source
 
@@ -54,7 +54,7 @@ Requirements: **Python 3.10+**, **PyInstaller**.
 
 ```bash
 # Clone the repo
-git clone [https://github.com/omnimistic/pain.git](https://github.com/omnimistic/pain.git)
+git clone https://github.com/omnimistic/pain.git
 cd pain
 
 # Build the executable
