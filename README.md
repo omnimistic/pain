@@ -54,7 +54,7 @@ Requirements: **Python 3.10+**, **PyInstaller**.
 
 ```bash
 # Clone the repo
-git clone [https://github.com/yourusername/pain.git](https://github.com/yourusername/pain.git)
+git clone [https://github.com/omnimistic/pain.git](https://github.com/omnimistic/pain.git)
 cd pain
 
 # Build the executable
