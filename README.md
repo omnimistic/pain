@@ -142,7 +142,7 @@ PAIN handles the heavy lifting, but you need the basics installed:
 
 
 
-*Note: If you don't have vcpkg installed, PAIN will automatically clone and bootstrap a local copy in `~/.pain/vcpkg`.*
+*Note: If you don't have vcpkg installed, PAIN will automatically clone and bootstrap a local copy in `~/.pain/vcpkg`.* but its still recommended to install a global copy of **vcpkg**
 
 ---
 
