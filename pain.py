@@ -343,15 +343,13 @@ def _extract_cmake_usage_lines(vcpkg_output: str, lib_name: str) -> list:
     return usage_lines
 
 
-# This function was written with the help ai but then it was heavily modified
 def _synthesize_cmake_hooks_from_config(lib_name: str, triplet: Optional[str]) -> list:
     """
-    Last-resort fallback for packages that ship no 'usage' file.
+    Last-resort fallback for packages that ship no 'usage' file: 
     Synthesizes CMake hooks by parsing package config files directly.
-    Handles libraries that do not ship a standard 'usage' file.
+    Handles modular libraries that do not ship a standard 'usage' file.
     Dynamically extracts and links all discovered targets.
     """
-    
     packages_dir = GLOBAL_VCPKG_PATH / "packages"
 
     # Find the package directory
@@ -371,9 +369,7 @@ def _synthesize_cmake_hooks_from_config(lib_name: str, triplet: Optional[str]) -
     cmake_files = list(share_dir.glob("*.cmake"))
     if not cmake_files: return []
     
-    # Try to extract imported target names from the cmake files.
-    # vcpkg targets are declared with add_library(Foo::Bar IMPORTED) or
-    # set_target_properties(Foo::Bar ...) patterns.
+    # Try to extract imported target names from the cmake files
     target_names = []
     imported_pattern = re.compile(r'add_library\(([A-Za-z0-9_:]+)\s+\w*\s*IMPORTED', re.IGNORECASE)
     property_pattern = re.compile(r'set_target_properties\(\s*([A-Za-z0-9_:]+)\s+PROPERTIES', re.IGNORECASE)
@@ -385,24 +381,24 @@ def _synthesize_cmake_hooks_from_config(lib_name: str, triplet: Optional[str]) -
             # 1. Scan for IMPORTED targets
             for m in imported_pattern.finditer(text):
                 name = m.group(1)
-                if '::' in name and name not in target_names:
+                if name not in target_names:
                     target_names.append(name)
                     
             # 2. Scan for PROPERTIES targets
             for m in property_pattern.finditer(text):
                 name = m.group(1)
-                if '::' in name and name not in target_names:
+                if name not in target_names:
                     target_names.append(name)
         except Exception:
             continue
 
     if target_names:
-        # Extract the package namespace (e.g., 'ftxui' from 'ftxui::screen')
+        # Extract the package namespace
         package_name = target_names[0].split("::")[0]
         # Combine ALL found targets into a single space-separated string
         all_targets = " ".join(target_names)
     else:
-        # Conventional fallback: fmt -> fmt::fmt
+        # Conventional fallback
         package_name = lib_name
         all_targets = f"{lib_name}::{lib_name}"
 
