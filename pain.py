@@ -11,10 +11,15 @@ import stat
 from pathlib import Path
 from typing import NoReturn, Optional, Tuple
 
+import parse_ifs
+
 
 # CONSTANTS
 
-PAIN_VERSION = "2.0"
+PAIN_VERSION = "3.0"
+
+# I love the version names of android so from this version forward each floor of version will have a designated name
+VERSION_NAME = "Capsicum"
 
 # ANSI color codes for terminal output
 C_RED = "\033[91m"
@@ -318,10 +323,12 @@ def setup_global_paths(triplet: Optional[str] = None) -> None:
 
 def _extract_cmake_usage_lines(vcpkg_output: str, lib_name: str) -> list:
     usage_lines = []
-    capturing = False
+    has_header = "provides CMake targets:" in vcpkg_output
+    capturing = not has_header
+    skip_next = False
 
     for line in vcpkg_output.split('\n'):
-        if "provides CMake targets:" in line:
+        if has_header and "provides CMake targets:" in line:
             capturing = True
             continue
 
@@ -329,16 +336,36 @@ def _extract_cmake_usage_lines(vcpkg_output: str, lib_name: str) -> list:
             stripped = line.strip()
 
             if not stripped:
+                continue
+
+            if has_header and "provides pkg-config" in line:
                 break
 
+            if stripped.startswith("#"):
+                comment_lower = stripped.lower()
+                if "if you" in comment_lower or "optional" in comment_lower or "alternatively" in comment_lower:
+                    skip_next = True
+                continue
+
             if stripped.startswith("find_package(") or stripped.startswith("target_link_libraries("):
+                is_optional = skip_next
+                skip_next = False
+                    
                 if stripped.startswith("target_link_libraries("):
                     stripped = re.sub(
                         r'target_link_libraries\([^ ]+',
                         'target_link_libraries(${PROJECT_NAME}',
                         stripped
                     )
-                usage_lines.append(stripped)
+                
+                # If we flagged it as optional, prefix it safely
+                if is_optional:
+                    line_to_add = f"# [OPTIONAL] {stripped}"
+                else:
+                    line_to_add = stripped
+
+                if line_to_add not in usage_lines:
+                    usage_lines.append(line_to_add)
 
     return usage_lines
 
@@ -365,40 +392,65 @@ def _synthesize_cmake_hooks_from_config(lib_name: str, triplet: Optional[str]) -
     share_dir = candidates[0] / "share" / lib_name
     if not share_dir.is_dir(): return []
     
-    # Collect all cmake files in the share dir
-    cmake_files = list(share_dir.glob("*.cmake"))
+    cmake_files = [f for f in share_dir.rglob("*.cmake") if not f.name.lower().startswith("find")]
     if not cmake_files: return []
-    
-    # Try to extract imported target names from the cmake files
-    target_names = []
-    imported_pattern = re.compile(r'add_library\(([A-Za-z0-9_:]+)\s+\w*\s*IMPORTED', re.IGNORECASE)
-    property_pattern = re.compile(r'set_target_properties\(\s*([A-Za-z0-9_:]+)\s+PROPERTIES', re.IGNORECASE)
 
+    # Map the vcpkg triplet to our parser's OS types
+    os_type = "windows"
+    if triplet:
+        t_lower = triplet.lower()
+        if "linux" in t_lower: os_type = "linux"
+        elif "osx" in t_lower or "darwin" in t_lower: os_type = "mac"
+
+    target_names = []
+
+    # Read files and run them through our smart stack parser
     for cmake_file in cmake_files:
         try:
             text = cmake_file.read_text(encoding='utf-8', errors='ignore')
-            
-            # 1. Scan for IMPORTED targets
-            for m in imported_pattern.finditer(text):
-                name = m.group(1)
-                if name not in target_names:
-                    target_names.append(name)
-                    
-            # 2. Scan for PROPERTIES targets
-            for m in property_pattern.finditer(text):
-                name = m.group(1)
-                if name not in target_names:
-                    target_names.append(name)
+            found_targets = parse_ifs.extract_os_aware_targets(text, os_type)
+            for t in found_targets:
+                if t not in target_names:
+                    target_names.append(t)
         except Exception:
             continue
 
     if target_names:
-        # Extract the package namespace
-        package_name = target_names[0].split("::")[0]
-        # Combine ALL found targets into a single space-separated string
-        all_targets = " ".join(target_names)
+        # Extract namespaces to find the primary library target group
+        namespaces = [name.split("::")[0] if "::" in name else name for name in target_names]
+        
+        counts = {}
+        for ns in namespaces:
+            counts[ns] = counts.get(ns, 0) + 1
+        sorted_namespaces = sorted(counts.keys(), key=lambda k: counts[k], reverse=True)
+        
+        lib_name_clean = lib_name.lower()
+        if lib_name_clean.startswith("lib") and len(lib_name_clean) > 3:
+            lib_name_clean = lib_name_clean[3:]
+            
+        best_namespace = None
+        for ns in sorted_namespaces:
+            if ns.lower() == lib_name.lower() or ns.lower() == lib_name_clean:
+                best_namespace = ns
+                break
+                
+        if not best_namespace:
+            best_namespace = sorted_namespaces[0]
+
+        # Keep everything our OS parser approved that belongs to the primary namespace
+        final_targets = []
+        for name in target_names:
+            target_base = name.split("::")[0] if "::" in name else name
+            if target_base == best_namespace:
+                final_targets.append(name)
+        
+        if final_targets:
+            package_name = best_namespace
+            all_targets = " ".join(final_targets)
+        else:
+            package_name = lib_name
+            all_targets = f"{lib_name}::{lib_name}"
     else:
-        # Conventional fallback
         package_name = lib_name
         all_targets = f"{lib_name}::{lib_name}"
 
@@ -1173,6 +1225,69 @@ def run_clean() -> None:
         print(f"\n{STATUS_INFO} Build directory does not exist. Nothing to clean.")
 
 
+def run_optionals() -> None:
+    curr = Path.cwd()
+    sidecar_path = curr / ".pain_deps.cmake"
+
+    if not sidecar_path.exists():
+        print(f"\n{STATUS_INFO} No .pain_deps.cmake found. Are you inside a synced PAIN project?")
+        return
+
+    content = sidecar_path.read_text(encoding='utf-8')
+    lines = content.split('\n')
+
+    optionals = []
+    for i, line in enumerate(lines):
+        if line.strip().startswith("# [OPTIONAL]"):
+            optionals.append((i, line))
+
+    if not optionals:
+        print(f"\n{STATUS_INFO} No optional linkers found in your current project.")
+        return
+
+    print(f"\n{STATUS_INFO} Found the following optional linkers:\n")
+    print(f"  {C_GREEN}0. Add All{C_RESET}")
+
+    for idx, (line_num, line) in enumerate(optionals, 1):
+        clean_cmd = line.replace("# [OPTIONAL]", "").strip()
+        # Try to extract just the target name for a cleaner UI
+        match = re.search(r'PRIVATE\s+([A-Za-z0-9_:]+)', clean_cmd)
+        target_name = match.group(1) if match else clean_cmd
+        print(f"  {C_YELLOW}{idx}.{C_RESET} {target_name.ljust(20)} {C_TERRACOTTA}({clean_cmd}){C_RESET}")
+
+    print("\n  Type 'nvm' to exit.")
+
+    choice = input(f"\n  {C_YELLOW}Select options to enable (e.g., 1,3 or 0 for all): {C_RESET}").strip().lower()
+
+    if choice == 'nvm' or not choice:
+        print(f"  {STATUS_INFO} Operation cancelled.")
+        return
+
+    to_enable = []
+    if choice == '0':
+        to_enable = list(range(len(optionals)))
+    else:
+        parts = [p.strip() for p in choice.split(',')]
+        for p in parts:
+            if p.isdigit():
+                num = int(p)
+                if 1 <= num <= len(optionals):
+                    to_enable.append(num - 1)
+
+    if not to_enable:
+        print(f"  {STATUS_FAIL} Invalid selection. Operation cancelled.")
+        return
+
+    # Uncomment the selected lines
+    for idx in to_enable:
+        line_num, line = optionals[idx]
+        lines[line_num] = line.replace("# [OPTIONAL]", "").strip()
+
+    sidecar_path.write_text('\n'.join(lines), encoding='utf-8')
+    print(f"\n{STATUS_OK} Successfully uncommented {len(to_enable)} optional linker(s)!")
+    print(f"  {C_YELLOW}Run 'pain build' to compile with the new targets.{C_RESET}\n")
+
+
 # UI
 
 def print_logo() -> None:
@@ -1211,6 +1326,7 @@ def print_help() -> None:
     print(f"  {C_YELLOW}install{C_RESET} <lib>   Download and compile a library globally")
     print(f"  {C_YELLOW}uninstall{C_RESET} <lib> Permanently delete a library from global cache")
     print(f"  {C_YELLOW}add{C_RESET} <lib>       Link an installed library to your project")
+    print(f"  {C_YELLOW}optionals{C_RESET}       Manage optional components (e.g., SFML::Main)")
     print(f"  {C_YELLOW}remove{C_RESET} <lib>    Remove a library from your project")
     print(f"  {C_YELLOW}search{C_RESET} <lib>    Search available packages")
     print(f"  {C_YELLOW}list{C_RESET}            List installed dependencies")
@@ -1250,7 +1366,7 @@ if __name__ == "__main__":
             print_help()
 
         elif cmd in ["version", "-v", "--version", "-version"]:
-            print(f"{C_RED}PAIN v{PAIN_VERSION}{C_RESET}")
+            print(f"{C_RED}PAIN v{PAIN_VERSION} '{VERSION_NAME}'{C_RESET}")
 
         elif cmd == "init":
             if len(sys.argv) < 3:
@@ -1284,7 +1400,12 @@ if __name__ == "__main__":
         elif cmd == "add":
             if len(sys.argv) < 3:
                 fatal("Please provide a library to add. Example: pain add fmt")
-            run_add(sys.argv[2])
+            
+            # Catch the optional flag
+            if sys.argv[2].lower() in ["-optionals", "--optionals", "optionals"]:
+                run_optionals()
+            else:
+                run_add(sys.argv[2])
 
         elif cmd == "remove":
             if len(sys.argv) < 3:
