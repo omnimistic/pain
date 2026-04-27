@@ -16,9 +16,9 @@
 </h4>
 
 <div align="center">
-  <a href="https://github.com/omnimistic/pain/releases/latest">
-    <img alt="Latest release" src="https://img.shields.io/github/v/release/omnimistic/pain?style=for-the-badge&color=C9CBFF&logoColor=D9E0EE&labelColor=302D41&label=PAIN&include_prerelease&sort=semver" />
-  </a>
+<a href="https://github.com/omnimistic/pain/releases/tag/v3.0-capsicum">
+  <img alt="Version" src="https://img.shields.io/badge/PAIN-v3.0-C9CBFF?style=for-the-badge&labelColor=302D41&logoColor=D9E0EE" />
+</a>
   <a href="https://github.com/omnimistic/pain/pulse">
     <img alt="Last commit" src="https://img.shields.io/github/last-commit/omnimistic/pain?style=for-the-badge&color=8bd5ca&logoColor=D9E0EE&labelColor=302D41"/>
   </a>
