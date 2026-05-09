@@ -489,7 +489,11 @@ def _robust_rmtree(path: Path, max_retries: int = 5, retry_delay: float = 0.5) -
                     continue
                 
                 if os.name == 'nt':
-                    cmd = f"Remove-Item -Path '{target}' -Recurse -Force -ErrorAction Stop"
+                    # Escape single quotes by doubling them to prevent command injection.
+                    # Also using -LiteralPath instead of -Path so PowerShell doesn't parse brackets [] or wildcards.
+                    safe_target = str(target).replace("'", "''")
+                    cmd = f"Remove-Item -LiteralPath '{safe_target}' -Recurse -Force -ErrorAction Stop"
+                    
                     result = subprocess.run(
                         ["powershell", "-NoProfile", "-Command", cmd],
                         capture_output=True, text=True
