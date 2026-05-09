@@ -120,6 +120,10 @@ pain run
 
 ---
 
+## Acknowledgement
+
+- [@X3r0Day](https://github.com/X3r0Day) - reported and helped validate a command injection vulnerability.
+
 ## License & Attribution
 
 This project is licensed under the **GPL-3.0 License**.
