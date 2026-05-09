@@ -8,6 +8,7 @@ import threading
 import time
 import platform
 import stat
+import difflib
 from pathlib import Path
 from typing import NoReturn, Optional, Tuple
 
@@ -730,9 +731,13 @@ def run_search(query: str) -> None:
     throbber = Throbber(f"Fetching packages matching '{query}'...")
     throbber.start()
 
+    # If the query has spaces (e.g., "json nlohman"), vcpkg will fail to find it.
+    # So we extract the first word as the search term instead.
+    vcpkg_query = query.split()[0] if ' ' in query else query
+
     try:
         result = subprocess.run(
-            [str(vcpkg_exe), "search", query],
+            [str(vcpkg_exe), "search", vcpkg_query],
             capture_output=True, text=True, cwd=GLOBAL_VCPKG_PATH
         )
         throbber.stop()
@@ -757,6 +762,9 @@ def run_search(query: str) -> None:
     max_desc_len = max(10, term_width - name_width - 6)
 
     lines = output.split('\n')
+
+    ranked_results = []
+
     for line in lines:
         if not line.strip() or line.startswith("If your library") or line.startswith("vcpkg search"):
             continue
@@ -765,12 +773,58 @@ def run_search(query: str) -> None:
         name = parts[0]
         desc = parts[1] if len(parts) > 1 else ""
 
+        # Score the package based on the full query
+        score = _score_search_result(query, name)
+
+        # If the user typed a multi word query and the fuzzy score is low
+        # We filter it out so the broader vcpkg_query doesn't spam the terminal.
+        if ' ' in query and score < 30:
+            continue
+
+        ranked_results.append((score, name, desc))
+
+    # Sorting: Primary by score (Descending), Secondary Alphabetically (Ascending)
+    ranked_results.sort(key=lambda x: (-x[0], x[1]))
+
+    if not ranked_results:
+        print(f"  {STATUS_FAIL} No relevant libraries found matching '{query}'.")
+        return
+
+    for score, name, desc in ranked_results:
         if len(desc) > max_desc_len:
             desc = desc[:max_desc_len - 3] + "..."
 
         print(f"  {C_GREEN}{name.ljust(name_width)}{C_RESET} {desc}")
 
     print(f"\n{STATUS_OK} Search complete. Use {C_YELLOW}pain install <lib>{C_RESET} to download.\n")
+
+
+def _score_search_result(query: str, pkg_name: str) -> float:
+    """
+    Calculates a relevance score for a search result.
+    Implements Priority 3, 2, 1 ranking + fuzzy matching.
+    """
+    # Token-based and case insensitive matching prep
+    q_clean = query.lower().replace('-', ' ').replace('_', ' ')
+    n_clean = pkg_name.lower().replace('-', ' ').replace('_', ' ')
+
+    score = 0.0
+
+    # Priority 3: Starts with the query
+    if n_clean.startswith(q_clean):
+        score += 300
+    # Priority 2: Ends with the query
+    elif n_clean.endswith(q_clean):
+        score += 200
+    # Priority 1: Contains the query as a substring
+    elif q_clean in n_clean:
+        score += 100
+
+    # Fuzzy matching score [0.0 to 1.0] gets converted to [0 to 100]
+    fuzzy_ratio = difflib.SequenceMatcher(None, q_clean, n_clean).ratio() * 100
+    score += fuzzy_ratio
+
+    return score
 
 
 def run_install(lib_name: str) -> None:
