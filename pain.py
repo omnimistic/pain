@@ -17,9 +17,9 @@ import parse_ifs
 
 # CONSTANTS
 
-PAIN_VERSION = "3.0"
+PAIN_VERSION = "3.1"
 
-# I love the version names of android so from this version forward each floor of version will have a designated name
+# Each new floor of version has a designated name since version 3.0
 VERSION_NAME = "Capsicum"
 
 # ANSI color codes for terminal output
@@ -328,6 +328,9 @@ def _extract_cmake_usage_lines(vcpkg_output: str, lib_name: str) -> list:
     capturing = not has_header
     skip_next = False
 
+    buffer = ""
+    parentheses_count = 0
+
     for line in vcpkg_output.split('\n'):
         if has_header and "provides CMake targets:" in line:
             capturing = True
@@ -336,37 +339,82 @@ def _extract_cmake_usage_lines(vcpkg_output: str, lib_name: str) -> list:
         if capturing:
             stripped = line.strip()
 
-            if not stripped:
-                continue
-
+            # Stop if we hit the next section of the vcpkg output
             if has_header and "provides pkg-config" in line:
                 break
+                
+            # Ignore empty lines unless we are in the middle of buffering a multiline command
+            if not stripped and not buffer:
+                continue
 
+            # Detect optionals/comments
             if stripped.startswith("#"):
                 comment_lower = stripped.lower()
                 if "if you" in comment_lower or "optional" in comment_lower or "alternatively" in comment_lower:
                     skip_next = True
+                
+                # Keep the comment so the user has context
+                if stripped not in usage_lines:
+                    usage_lines.append(stripped)
                 continue
 
-            if stripped.startswith("find_package(") or stripped.startswith("target_link_libraries("):
-                is_optional = skip_next
-                skip_next = False
-                    
-                if stripped.startswith("target_link_libraries("):
-                    stripped = re.sub(
-                        r'target_link_libraries\([^ ]+',
-                        'target_link_libraries(${PROJECT_NAME}',
-                        stripped
-                    )
+            # If we are currently buffering a multi-line command
+            if buffer:
+                buffer += " " + stripped  # Collapse multi-line into a single spaced string
+                parentheses_count += stripped.count('(') - stripped.count(')')
                 
-                # If we flagged it as optional, prefix it safely
-                if is_optional:
-                    line_to_add = f"# [OPTIONAL] {stripped}"
-                else:
-                    line_to_add = stripped
+                # If parentheses are balanced, we have finished the command
+                if parentheses_count <= 0:
+                    is_optional = skip_next
+                    skip_next = False
+                    
+                    final_cmd = buffer
+                    if final_cmd.startswith("target_link_libraries("):
+                        # Safely inject the PAIN project variable
+                        final_cmd = re.sub(
+                            r'target_link_libraries\(\s*[^ \)]+',
+                            'target_link_libraries(${PROJECT_NAME}',
+                            final_cmd,
+                            count=1
+                        )
+                        
+                    if is_optional:
+                        final_cmd = f"# [OPTIONAL] {final_cmd}"
+                        
+                    if final_cmd not in usage_lines:
+                        usage_lines.append(final_cmd)
+                        
+                    buffer = ""
+                    parentheses_count = 0
+                continue
 
-                if line_to_add not in usage_lines:
-                    usage_lines.append(line_to_add)
+            # Check if a new command is starting
+            if stripped.startswith("find_package(") or stripped.startswith("target_link_libraries("):
+                buffer = stripped
+                parentheses_count = stripped.count('(') - stripped.count(')')
+                
+                # If it's just a single-line command
+                if parentheses_count <= 0:
+                    is_optional = skip_next
+                    skip_next = False
+                    
+                    final_cmd = buffer
+                    if final_cmd.startswith("target_link_libraries("):
+                        final_cmd = re.sub(
+                            r'target_link_libraries\(\s*[^ \)]+',
+                            'target_link_libraries(${PROJECT_NAME}',
+                            final_cmd,
+                            count=1
+                        )
+                        
+                    if is_optional:
+                        final_cmd = f"# [OPTIONAL] {final_cmd}"
+                        
+                    if final_cmd not in usage_lines:
+                        usage_lines.append(final_cmd)
+                        
+                    buffer = ""
+                    parentheses_count = 0
 
     return usage_lines
 
@@ -1407,84 +1455,92 @@ def dashboard() -> None:
 
 
 if __name__ == "__main__":
-    _, runtime_triplet = detect_best_compiler()
-    if runtime_triplet and "VCPKG_DEFAULT_TRIPLET" not in os.environ:
-        os.environ["VCPKG_DEFAULT_TRIPLET"] = runtime_triplet
-        os.environ["VCPKG_DEFAULT_HOST_TRIPLET"] = runtime_triplet
+    try:
+        _, runtime_triplet = detect_best_compiler()
+        if runtime_triplet and "VCPKG_DEFAULT_TRIPLET" not in os.environ:
+            os.environ["VCPKG_DEFAULT_TRIPLET"] = runtime_triplet
+            os.environ["VCPKG_DEFAULT_HOST_TRIPLET"] = runtime_triplet
 
-    if "VCPKG_ROOT" not in os.environ:
-        os.environ["VCPKG_ROOT"] = str(GLOBAL_VCPKG_PATH)
+        if "VCPKG_ROOT" not in os.environ:
+            os.environ["VCPKG_ROOT"] = str(GLOBAL_VCPKG_PATH)
 
-    if len(sys.argv) < 2:
-        dashboard()
-    else:
-        cmd = sys.argv[1].lower()
-
-        if cmd in ["help", "-help", "--help", "-h"]:
-            print_help()
-
-        elif cmd in ["version", "-v", "--version", "-version"]:
-            print(f"{C_RED}PAIN v{PAIN_VERSION} '{VERSION_NAME}'{C_RESET}")
-
-        elif cmd == "init":
-            if len(sys.argv) < 3:
-                fatal("Please provide a project name. Example: pain init MyApp")
-            run_init(sys.argv[2])
-
-        elif cmd == "adopt":
-            run_adopt()
-
-        elif cmd == "doctor":
-            run_doctor()
-
-        elif cmd == "purge":
-            run_purge()
-
-        elif cmd == "search":
-            if len(sys.argv) < 3:
-                fatal("Please provide a library to search for. Example: pain search fmt")
-            run_search(sys.argv[2])
-
-        elif cmd == "install":
-            if len(sys.argv) < 3:
-                fatal("Please provide a library to install. Example: pain install fmt")
-            run_install(sys.argv[2])
-
-        elif cmd == "uninstall":
-            if len(sys.argv) < 3:
-                fatal("Please provide a library to uninstall. Example: pain uninstall fmt")
-            run_uninstall(sys.argv[2])
-
-        elif cmd == "add":
-            if len(sys.argv) < 3:
-                fatal("Please provide a library to add. Example: pain add fmt")
-            
-            # Catch the optional flag
-            if sys.argv[2].lower() in ["-optionals", "--optionals", "optionals"]:
-                run_optionals()
-            else:
-                run_add(sys.argv[2])
-
-        elif cmd == "remove":
-            if len(sys.argv) < 3:
-                fatal("Please provide a library to remove. Example: pain remove fmt")
-            run_remove(sys.argv[2])
-
-        elif cmd == "sync":
-            run_sync()
-
-        elif cmd == "list":
-            run_list()
-
-        elif cmd == "build":
-            run_build(sys.argv[2:])
-
-        elif cmd == "run":
-            run_run(sys.argv[2:])
-
-        elif cmd == "clean":
-            run_clean()
-
+        if len(sys.argv) < 2:
+            dashboard()
         else:
-            print(f"\n{C_RED}Unknown command: '{cmd}'{C_RESET}")
-            print(f"Type {C_YELLOW}pain help{C_RESET} for available commands.\n")
+            cmd = sys.argv[1].lower()
+
+            if cmd in ["help", "-help", "--help", "-h"]:
+                print_help()
+
+            elif cmd in ["version", "-v", "--version", "-version"]:
+                print(f"{C_RED}PAIN v{PAIN_VERSION} '{VERSION_NAME}'{C_RESET}")
+
+            elif cmd == "init":
+                if len(sys.argv) < 3:
+                    fatal("Please provide a project name. Example: pain init MyApp")
+                run_init(sys.argv[2])
+
+            elif cmd == "adopt":
+                run_adopt()
+
+            elif cmd == "doctor":
+                run_doctor()
+
+            elif cmd == "purge":
+                run_purge()
+
+            elif cmd == "search":
+                if len(sys.argv) < 3:
+                    fatal("Please provide a library to search for. Example: pain search fmt")
+                run_search(sys.argv[2])
+
+            elif cmd == "install":
+                if len(sys.argv) < 3:
+                    fatal("Please provide a library to install. Example: pain install fmt")
+                run_install(sys.argv[2])
+
+            elif cmd == "uninstall":
+                if len(sys.argv) < 3:
+                    fatal("Please provide a library to uninstall. Example: pain uninstall fmt")
+                run_uninstall(sys.argv[2])
+
+            elif cmd == "add":
+                if len(sys.argv) < 3:
+                    fatal("Please provide a library to add. Example: pain add fmt")
+                
+                # Catch the optional flag
+                if sys.argv[2].lower() in ["-optionals", "--optionals", "optionals"]:
+                    run_optionals()
+                else:
+                    run_add(sys.argv[2])
+
+            elif cmd in ["optionals", "optional"]:
+                run_optionals()
+
+            elif cmd == "remove":
+                if len(sys.argv) < 3:
+                    fatal("Please provide a library to remove. Example: pain remove fmt")
+                run_remove(sys.argv[2])
+
+            elif cmd == "sync":
+                run_sync()
+
+            elif cmd == "list":
+                run_list()
+
+            elif cmd == "build":
+                run_build(sys.argv[2:])
+
+            elif cmd == "run":
+                run_run(sys.argv[2:])
+
+            elif cmd == "clean":
+                run_clean()
+
+            else:
+                print(f"\n{C_RED}Unknown command: '{cmd}'{C_RESET}")
+                print(f"Type {C_YELLOW}pain help{C_RESET} for available commands.\n")
+
+    except KeyboardInterrupt:
+        print(f"\r  {C_YELLOW}[INFO] Operation aborted by user (Ctrl+C).{C_RESET}\n")
+        sys.exit(130)
