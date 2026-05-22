@@ -17,7 +17,7 @@ import parse_ifs
 
 # CONSTANTS
 
-PAIN_VERSION = "3.1"
+PAIN_VERSION = "3.2"
 
 # Each new floor of version has a designated name since version 3.0
 VERSION_NAME = "Capsicum"
@@ -116,9 +116,7 @@ def generate_presets(root_path: Path) -> None:
         "displayName": "PAIN vcpkg Toolchain",
         "binaryDir": "${sourceDir}/build",
         "cacheVariables": {
-            "CMAKE_TOOLCHAIN_FILE": str(
-                GLOBAL_VCPKG_PATH / "scripts" / "buildsystems" / "vcpkg.cmake"
-            ).replace('\\', '/')
+            "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
         }
     }
 
@@ -710,9 +708,11 @@ def run_doctor() -> None:
         choice = input(f"\n  {C_YELLOW}Install vcpkg globally now? [Y/n]: {C_RESET}").strip().lower()
 
         if choice in ['y', 'yes', '']:
-            print(f"\n  {STATUS_INFO} Bootstrapping vcpkg (this may take a few minutes)...")
-
+            
             PAIN_DIR.mkdir(parents=True, exist_ok=True)
+            
+            throbber = Throbber("Bootstrapping vcpkg toolchain (this may take a few minutes)...")
+            throbber.start()
 
             try:
                 if GLOBAL_VCPKG_PATH.exists():
@@ -723,26 +723,45 @@ def run_doctor() -> None:
 
                 subprocess.run(
                     ["git", "clone", "https://github.com/microsoft/vcpkg.git", str(GLOBAL_VCPKG_PATH)],
-                    check=True
+                    capture_output=True, text=True, check=True
                 )
 
                 if os.name == 'nt':
                     bat_path = str(GLOBAL_VCPKG_PATH / "bootstrap-vcpkg.bat")
-                    subprocess.run(f'"{bat_path}" -disableMetrics', cwd=GLOBAL_VCPKG_PATH, shell=True, check=True)
+                    subprocess.run(f'"{bat_path}" -disableMetrics', cwd=GLOBAL_VCPKG_PATH, shell=True, capture_output=True, text=True, check=True)
                 else:
                     sh_path = str(GLOBAL_VCPKG_PATH / "bootstrap-vcpkg.sh")
-                    subprocess.run([sh_path, "-disableMetrics"], cwd=GLOBAL_VCPKG_PATH, check=True)
+                    subprocess.run([sh_path, "-disableMetrics"], cwd=GLOBAL_VCPKG_PATH, capture_output=True, text=True, check=True)
 
-                print(f"  {STATUS_OK} vcpkg installed successfully!")
-                setup_global_paths(triplet)
+            except subprocess.CalledProcessError as e:
+                throbber.stop()
 
+                if GLOBAL_VCPKG_PATH.exists():
+                    try:
+                        _robust_rmtree(GLOBAL_VCPKG_PATH)
+                    except OSError:
+                        pass
+
+                fatal(f"Failed to bootstrap vcpkg. Partial installation removed.\nDetails: {e.stderr}")
+            
             except Exception as e:
+                throbber.stop()
+
                 if GLOBAL_VCPKG_PATH.exists():
                     try:
                         _robust_rmtree(GLOBAL_VCPKG_PATH)
                     except OSError:
                         print(f"  {STATUS_INFO} Warning: Could not remove partial installation at {GLOBAL_VCPKG_PATH}")
-                fatal(f"Failed to install vcpkg. Partial installation removed.\nDetails: {e}")
+
+                fatal(f"Unexpected error during bootstrap: {e}")
+            
+            finally:
+                if throbber.running:
+                    throbber.stop()
+
+            print(f"  {STATUS_OK} vcpkg installed successfully!")
+            setup_global_paths(triplet)
+
         else:
             print(f"  {STATUS_INFO} vcpkg installation skipped.")
 
@@ -876,6 +895,7 @@ def _score_search_result(query: str, pkg_name: str) -> float:
 
 
 def run_install(lib_name: str) -> None:
+
     print(f"\n{STATUS_INFO} Installing '{lib_name}' globally...")
     print(f"  {C_YELLOW}If this is your first time installing this library, it may take a few minutes to download and compile from source.{C_RESET}\n")
 
@@ -883,9 +903,23 @@ def run_install(lib_name: str) -> None:
     if not vcpkg_exe.exists():
         fatal("vcpkg is not installed. Run 'pain doctor' first to set up your environment.")
 
-    try:
-        subprocess.run([str(vcpkg_exe), "install", lib_name], check=True, cwd=GLOBAL_VCPKG_PATH)
+    throbber = Throbber(f"Downloading and compiling {lib_name} (this could take a while)...")
+    throbber.start()
 
+    try:
+        # Capture output so the raw vcpkg terminal spam doesn't collide with our Throbber
+        result = subprocess.run(
+            [str(vcpkg_exe), "install", lib_name],
+            cwd=GLOBAL_VCPKG_PATH,
+            capture_output=True, text=True
+        )
+    finally:
+        throbber.stop()
+
+    if result.returncode != 0:
+        fatal(f"Installation failed:\n{result.stderr}")
+
+    try:
         list_check = subprocess.run(
             [str(vcpkg_exe), "list", lib_name],
             capture_output=True, text=True, cwd=GLOBAL_VCPKG_PATH
@@ -899,12 +933,11 @@ def run_install(lib_name: str) -> None:
         print(f"\n{STATUS_OK} Successfully installed '{lib_name}' to the global cache.")
         print(f"  {C_YELLOW}Tip: You can now run 'pain add {lib_name}' in any project to link it instantly.{C_RESET}\n")
 
-    except subprocess.CalledProcessError:
-        fatal(f"vcpkg failed to install '{lib_name}'. Check the output above for details.")
     except SystemExit:
         raise
+    
     except Exception as e:
-        fatal(f"Unexpected error while installing '{lib_name}': {e}")
+        fatal(f"Unexpected error while verifying '{lib_name}': {e}")
 
 
 def run_uninstall(lib_name: str) -> None:
@@ -1463,6 +1496,10 @@ if __name__ == "__main__":
 
         if "VCPKG_ROOT" not in os.environ:
             os.environ["VCPKG_ROOT"] = str(GLOBAL_VCPKG_PATH)
+
+        # Prevents invisible telemetry prompts from hanging the CLI
+        if "VCPKG_DISABLE_METRICS" not in os.environ:
+            os.environ["VCPKG_DISABLE_METRICS"] = "1"
 
         if len(sys.argv) < 2:
             dashboard()
