@@ -127,9 +127,3 @@ pain run
 ## License & Attribution
 
 This project is licensed under the **GPL-3.0 License**.
-
-> [!IMPORTANT]  
-> If you redistribute or modify PAIN, or incorporate PAIN (or any part of it) into your own projects(eg. making your own IDE that comes pre equiped with PAIN), then you must retain the original author credits and provide a link back to this repository:
-> 
-> PAIN repository: https://github.com/omnimistic/pain/  
-> Original author (me): [@omnimistic](https://github.com/omnimistic)
