@@ -141,7 +141,7 @@ def inject_hook(cmake_path: Path) -> bool:
     if PAIN_HOOK_LINE in content:
         print(f"  {STATUS_INFO} PAIN hook already present in CMakeLists.txt, skipping.")
         return False
-    
+
     new_content, count = re.subn(
         r'(project\s*\([^)]*\))',
         lambda m: m.group(1) + f'\n\n{PAIN_HOOK_BLOCK}\n',
@@ -340,7 +340,7 @@ def _extract_cmake_usage_lines(vcpkg_output: str, lib_name: str) -> list:
             # Stop if we hit the next section of the vcpkg output
             if has_header and "provides pkg-config" in line:
                 break
-                
+
             # Ignore empty lines unless we are in the middle of buffering a multiline command
             if not stripped and not buffer:
                 continue
@@ -350,7 +350,7 @@ def _extract_cmake_usage_lines(vcpkg_output: str, lib_name: str) -> list:
                 comment_lower = stripped.lower()
                 if "if you" in comment_lower or "optional" in comment_lower or "alternatively" in comment_lower:
                     skip_next = True
-                
+
                 # Keep the comment so the user has context
                 if stripped not in usage_lines:
                     usage_lines.append(stripped)
@@ -360,12 +360,12 @@ def _extract_cmake_usage_lines(vcpkg_output: str, lib_name: str) -> list:
             if buffer:
                 buffer += " " + stripped  # Collapse multi-line into a single spaced string
                 parentheses_count += stripped.count('(') - stripped.count(')')
-                
+
                 # If parentheses are balanced, we have finished the command
                 if parentheses_count <= 0:
                     is_optional = skip_next
                     skip_next = False
-                    
+
                     final_cmd = buffer
                     if final_cmd.startswith("target_link_libraries("):
                         # Safely inject the PAIN project variable
@@ -375,13 +375,13 @@ def _extract_cmake_usage_lines(vcpkg_output: str, lib_name: str) -> list:
                             final_cmd,
                             count=1
                         )
-                        
+
                     if is_optional:
                         final_cmd = f"# [OPTIONAL] {final_cmd}"
-                        
+
                     if final_cmd not in usage_lines:
                         usage_lines.append(final_cmd)
-                        
+
                     buffer = ""
                     parentheses_count = 0
                 continue
@@ -390,12 +390,12 @@ def _extract_cmake_usage_lines(vcpkg_output: str, lib_name: str) -> list:
             if stripped.startswith("find_package(") or stripped.startswith("target_link_libraries("):
                 buffer = stripped
                 parentheses_count = stripped.count('(') - stripped.count(')')
-                
+
                 # If it's just a single-line command
                 if parentheses_count <= 0:
                     is_optional = skip_next
                     skip_next = False
-                    
+
                     final_cmd = buffer
                     if final_cmd.startswith("target_link_libraries("):
                         final_cmd = re.sub(
@@ -404,13 +404,13 @@ def _extract_cmake_usage_lines(vcpkg_output: str, lib_name: str) -> list:
                             final_cmd,
                             count=1
                         )
-                        
+
                     if is_optional:
                         final_cmd = f"# [OPTIONAL] {final_cmd}"
-                        
+
                     if final_cmd not in usage_lines:
                         usage_lines.append(final_cmd)
-                        
+
                     buffer = ""
                     parentheses_count = 0
 
@@ -419,7 +419,7 @@ def _extract_cmake_usage_lines(vcpkg_output: str, lib_name: str) -> list:
 
 def _synthesize_cmake_hooks_from_config(lib_name: str, triplet: Optional[str]) -> list:
     """
-    Last-resort fallback for packages that ship no 'usage' file: 
+    Last-resort fallback for packages that ship no 'usage' file:
     Synthesizes CMake hooks by parsing package config files directly.
     Handles modular libraries that do not ship a standard 'usage' file.
     Dynamically extracts and links all discovered targets.
@@ -430,7 +430,7 @@ def _synthesize_cmake_hooks_from_config(lib_name: str, triplet: Optional[str]) -
     candidates = list(packages_dir.glob(f"{lib_name}_{triplet}")) if triplet else []
     if not candidates:
         candidates = list(packages_dir.glob(f"{lib_name}_*"))
-    
+
     # Exclude debug-only dirs
     candidates = [c for c in candidates if c.is_dir() and "debug" not in c.name]
 
@@ -438,7 +438,7 @@ def _synthesize_cmake_hooks_from_config(lib_name: str, triplet: Optional[str]) -
 
     share_dir = candidates[0] / "share" / lib_name
     if not share_dir.is_dir(): return []
-    
+
     cmake_files = [f for f in share_dir.rglob("*.cmake") if not f.name.lower().startswith("find")]
     if not cmake_files: return []
 
@@ -465,22 +465,22 @@ def _synthesize_cmake_hooks_from_config(lib_name: str, triplet: Optional[str]) -
     if target_names:
         # Extract namespaces to find the primary library target group
         namespaces = [name.split("::")[0] if "::" in name else name for name in target_names]
-        
+
         counts = {}
         for ns in namespaces:
             counts[ns] = counts.get(ns, 0) + 1
         sorted_namespaces = sorted(counts.keys(), key=lambda k: counts[k], reverse=True)
-        
+
         lib_name_clean = lib_name.lower()
         if lib_name_clean.startswith("lib") and len(lib_name_clean) > 3:
             lib_name_clean = lib_name_clean[3:]
-            
+
         best_namespace = None
         for ns in sorted_namespaces:
             if ns.lower() == lib_name.lower() or ns.lower() == lib_name_clean:
                 best_namespace = ns
                 break
-                
+
         if not best_namespace:
             best_namespace = sorted_namespaces[0]
 
@@ -490,7 +490,7 @@ def _synthesize_cmake_hooks_from_config(lib_name: str, triplet: Optional[str]) -
             target_base = name.split("::")[0] if "::" in name else name
             if target_base == best_namespace:
                 final_targets.append(name)
-        
+
         if final_targets:
             package_name = best_namespace
             all_targets = " ".join(final_targets)
@@ -528,19 +528,19 @@ def _robust_rmtree(path: Path, max_retries: int = 5, retry_delay: float = 0.5) -
                     target.chmod(stat.S_IWRITE)
                     target.unlink()
                 return
-            
+
             except OSError as e:
 
                 if attempt < max_retries - 1:
                     time.sleep(retry_delay)
                     continue
-                
+
                 if os.name == 'nt':
                     # Escape single quotes by doubling them to prevent command injection.
                     # Also using -LiteralPath instead of -Path so PowerShell doesn't parse brackets [] or wildcards.
                     safe_target = str(target).replace("'", "''")
                     cmd = f"Remove-Item -LiteralPath '{safe_target}' -Recurse -Force -ErrorAction Stop"
-                    
+
                     result = subprocess.run(
                         ["powershell", "-NoProfile", "-Command", cmd],
                         capture_output=True, text=True
@@ -554,13 +554,13 @@ def _robust_rmtree(path: Path, max_retries: int = 5, retry_delay: float = 0.5) -
         # Bottom-up walk is required so directories are empty before we try to rmdir them
         for root, dirs, files in os.walk(path, topdown=False):
             root_path = Path(root)
-            
+
             for file in files:
                 file_path = root_path / file
                 # Dynamically update the Throbber text. Truncate name so it doesn't line-wrap and break the UI.
                 short_name = file_path.name if len(file_path.name) < 45 else file_path.name[:42] + "..."
                 throbber.message = f"Deleting: {short_name}"
-                
+
                 _force_delete(file_path)
 
             for dir_name in dirs:
@@ -708,9 +708,9 @@ def run_doctor() -> None:
         choice = input(f"\n  {C_YELLOW}Install vcpkg globally now? [Y/n]: {C_RESET}").strip().lower()
 
         if choice in ['y', 'yes', '']:
-            
+
             PAIN_DIR.mkdir(parents=True, exist_ok=True)
-            
+
             throbber = Throbber("Bootstrapping vcpkg toolchain (this may take a few minutes)...")
             throbber.start()
 
@@ -743,7 +743,7 @@ def run_doctor() -> None:
                         pass
 
                 fatal(f"Failed to bootstrap vcpkg. Partial installation removed.\nDetails: {e.stderr}")
-            
+
             except Exception as e:
                 throbber.stop()
 
@@ -754,7 +754,7 @@ def run_doctor() -> None:
                         print(f"  {STATUS_INFO} Warning: Could not remove partial installation at {GLOBAL_VCPKG_PATH}")
 
                 fatal(f"Unexpected error during bootstrap: {e}")
-            
+
             finally:
                 if throbber.running:
                     throbber.stop()
@@ -773,7 +773,7 @@ def run_doctor() -> None:
 def run_purge() -> None:
     # Delete the entire vcpkg global folder
     print(f"\n{STATUS_INFO} Purging the global vcpkg installation...")
-    
+
     if GLOBAL_VCPKG_PATH.exists():
         try:
             success = _robust_rmtree(GLOBAL_VCPKG_PATH)
@@ -935,7 +935,7 @@ def run_install(lib_name: str) -> None:
 
     except SystemExit:
         raise
-    
+
     except Exception as e:
         fatal(f"Unexpected error while verifying '{lib_name}': {e}")
 
@@ -981,11 +981,11 @@ def run_add(lib_name: str) -> None:
         [str(vcpkg_exe), "list", lib_name],
         capture_output=True, text=True, cwd=GLOBAL_VCPKG_PATH
     )
+    # Instead of throwing an error, we can automatically install the library if it's not found in the global cache.
     if not _vcpkg_installed_pattern(lib_name).search(list_check.stdout):
-        fatal(
-            f"'{lib_name}' is not installed in the global cache. "
-            f"Run 'pain install {lib_name}' first."
-        )
+        print("This library isn't installed in the global cache")
+        print("Installing now...")
+        run_install(lib_name)
 
     print(f"\n{STATUS_INFO} Linking '{lib_name}' to your project...")
 
@@ -1010,8 +1010,8 @@ def run_add(lib_name: str) -> None:
 
         # Fallback chain when vcpkg install output is empty (library already cached).
         # Level 1: look for a static 'usage' file in the package share directory.
-        
-        # Level 2:  synthesise hooks by parsing the cmake config files directly. 
+
+        # Level 2:  synthesise hooks by parsing the cmake config files directly.
         #           This handles MinGW and other triplets that never generate a
         #           'usage' file but do ship a proper *-config.cmake.
         if not usage_lines:
@@ -1040,7 +1040,7 @@ def run_add(lib_name: str) -> None:
     except Exception as e:
         # If anything above fails, we exit here. The manifest is never written.
         fatal(f"An error occurred while extracting hooks for {lib_name}:\n{e}")
-        
+
     finally:
         # Use a consistent stop path, always call stop() in finally so the
         # throbber is cleaned up whether we succeed, fail, or hit an exception
@@ -1062,7 +1062,7 @@ def run_add(lib_name: str) -> None:
             added_to_manifest = True
 
         manifest_msg = "added to vcpkg.json" if added_to_manifest else "already in vcpkg.json"
-        
+
         if usage_lines:
             print(f"  {STATUS_OK} '{lib_name}' linked ({manifest_msg}).")
         else:
@@ -1148,7 +1148,7 @@ def run_sync() -> None:
                 [str(vcpkg_exe), "install", lib],
                 capture_output=True, text=True, cwd=GLOBAL_VCPKG_PATH
             )
-            
+
             if result.returncode != 0:
                 failures.append(lib)
                 continue
@@ -1193,7 +1193,7 @@ def run_sync() -> None:
 
     for lib in failures:
         print(f"  {STATUS_FAIL} Failed to retrieve hooks for '{lib}'.")
-        
+
     print(f"  {STATUS_OK} Sync complete! Restored hooks for {success_count} of {len(deps)} libraries.")
 
 
@@ -1544,7 +1544,7 @@ if __name__ == "__main__":
             elif cmd == "add":
                 if len(sys.argv) < 3:
                     fatal("Please provide a library to add. Example: pain add fmt")
-                
+
                 # Catch the optional flag
                 if sys.argv[2].lower() in ["-optionals", "--optionals", "optionals"]:
                     run_optionals()
